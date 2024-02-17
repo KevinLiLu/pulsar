@@ -27,6 +27,8 @@ import org.apache.pulsar.client.api.PulsarClientException;
 import org.apache.pulsar.client.api.Schema;
 import org.apache.pulsar.client.api.SchemaSerializationException;
 import org.apache.pulsar.client.api.TypedMessageBuilder;
+import org.apache.pulsar.client.api.metrics.MetricsTrackerFactory;
+import org.apache.pulsar.client.api.metrics.ProducerMetricsTracker;
 import org.apache.pulsar.client.api.transaction.Transaction;
 import org.apache.pulsar.client.impl.conf.ProducerConfigurationData;
 import org.apache.pulsar.client.impl.transaction.TransactionImpl;
@@ -42,6 +44,7 @@ public abstract class ProducerBase<T> extends HandlerState implements Producer<T
     protected final ProducerInterceptors interceptors;
     protected final ConcurrentOpenHashMap<SchemaHash, byte[]> schemaCache;
     protected volatile MultiSchemaMode multiSchemaMode = MultiSchemaMode.Auto;
+    final ProducerMetricsTracker metricsTracker;
 
     protected ProducerBase(PulsarClientImpl client, String topic, ProducerConfigurationData conf,
             CompletableFuture<Producer<T>> producerCreatedFuture, Schema<T> schema, ProducerInterceptors interceptors) {
@@ -54,6 +57,12 @@ public abstract class ProducerBase<T> extends HandlerState implements Producer<T
                 ConcurrentOpenHashMap.<SchemaHash, byte[]>newBuilder().build();
         if (!conf.isMultiSchema()) {
             multiSchemaMode = MultiSchemaMode.Disabled;
+        }
+        MetricsTrackerFactory metricsTrackerFactory = client.getConfiguration().getMetricsTrackerFactory();
+        if (client.getConfiguration().getStatsIntervalSeconds() > 0 || metricsTrackerFactory != null) {
+            this.metricsTracker = metricsTrackerFactory.create(client, this);
+        } else {
+            this.metricsTracker = NoOpProducerMetricsTracker.INSTANCE;
         }
     }
 

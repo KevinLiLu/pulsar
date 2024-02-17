@@ -35,8 +35,10 @@ import org.apache.pulsar.client.api.PulsarClientException;
 import org.apache.pulsar.client.api.PulsarClientException.UnsupportedAuthenticationException;
 import org.apache.pulsar.client.api.ServiceUrlProvider;
 import org.apache.pulsar.client.api.SizeUnit;
+import org.apache.pulsar.client.api.metrics.MetricsTrackerFactory;
 import org.apache.pulsar.client.impl.conf.ClientConfigurationData;
 import org.apache.pulsar.client.impl.conf.ConfigurationDataUtils;
+import org.apache.pulsar.client.impl.metrics.MetricsTrackerUtil;
 import org.apache.pulsar.common.tls.InetAddressUtils;
 
 public class ClientBuilderImpl implements ClientBuilder {
@@ -78,6 +80,7 @@ public class ClientBuilderImpl implements ClientBuilder {
     public ClientBuilder loadConf(Map<String, Object> config) {
         conf = ConfigurationDataUtils.loadData(config, conf, ClientConfigurationData.class);
         setAuthenticationFromPropsIfAvailable(conf);
+        setMetricsTrackerFactoryFromPropsIfAvailable(conf);
         return this;
     }
 
@@ -445,5 +448,35 @@ public class ClientBuilderImpl implements ClientBuilder {
         }
         conf.setDescription(description);
         return this;
+    }
+
+    @Override
+    public ClientBuilder metricsTrackerFactory(MetricsTrackerFactory metricsTrackerFactory) {
+        conf.setMetricsTrackerFactory(metricsTrackerFactory);
+        return this;
+    }
+
+    @Override
+    public ClientBuilder metricsTrackerFactory(String metricsTrackerFactoryClassName, Map<String, String> params)
+            throws PulsarClientException.InvalidConfigurationException {
+        conf.setMetricsTrackerFactoryClassName(metricsTrackerFactoryClassName);
+        conf.setMetricsTrackerFactoryParamMap(params);
+        conf.setMetricsTrackerFactory(MetricsTrackerUtil.create(metricsTrackerFactoryClassName, params));
+        return this;
+    }
+
+    private void setMetricsTrackerFactoryFromPropsIfAvailable(ClientConfigurationData clientConfig) {
+        String metricsTrackerFactoryPluginClass = clientConfig.getMetricsTrackerFactoryClassName();
+        Map<String, String> paramMap = clientConfig.getAuthParamMap();
+        if (StringUtils.isBlank(metricsTrackerFactoryPluginClass)) {
+            return;
+        }
+        try {
+            if (paramMap != null) {
+                metricsTrackerFactory(metricsTrackerFactoryPluginClass, paramMap);
+            }
+        } catch (PulsarClientException.InvalidConfigurationException ex) {
+            throw new RuntimeException("Failed to create metricsTrackerFactory: " + ex.getMessage(), ex);
+        }
     }
 }

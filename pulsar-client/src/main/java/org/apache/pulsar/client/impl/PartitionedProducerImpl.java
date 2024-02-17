@@ -43,6 +43,7 @@ import org.apache.pulsar.client.api.MessageRouter;
 import org.apache.pulsar.client.api.MessageRoutingMode;
 import org.apache.pulsar.client.api.Producer;
 import org.apache.pulsar.client.api.ProducerAccessMode;
+import org.apache.pulsar.client.api.ProducerStats;
 import org.apache.pulsar.client.api.PulsarClientException;
 import org.apache.pulsar.client.api.PulsarClientException.NotSupportedException;
 import org.apache.pulsar.client.api.Schema;
@@ -63,6 +64,7 @@ public class PartitionedProducerImpl<T> extends ProducerBase<T> {
     private final ConcurrentOpenHashMap<Integer, ProducerImpl<T>> producers;
     private final MessageRouter routerPolicy;
     private final PartitionedTopicProducerStatsRecorderImpl stats;
+    private final PartitionedTopicProducerStatsRecorderImpl statsRecorder;
     private TopicMetadata topicMetadata;
     private final int firstPartitionIndex;
     private String overrideProducerName;
@@ -109,6 +111,13 @@ public class PartitionedProducerImpl<T> extends ProducerBase<T> {
             partitionsAutoUpdateTimeout = client.timer()
                 .newTimeout(partitionsAutoUpdateTimerTask,
                         conf.getAutoUpdatePartitionsIntervalSeconds(), TimeUnit.SECONDS);
+        }
+
+        ProducerStats statsRecorder = metricsTracker.getStats();
+        if (statsRecorder instanceof PartitionedTopicProducerStatsRecorderImpl) {
+            this.statsRecorder = (PartitionedTopicProducerStatsRecorderImpl) statsRecorder;
+        } else {
+            this.statsRecorder = null;
         }
     }
 
@@ -351,13 +360,13 @@ public class PartitionedProducerImpl<T> extends ProducerBase<T> {
 
     @Override
     public synchronized ProducerStatsRecorderImpl getStats() {
-        if (stats == null) {
+        if (statsRecorder == null) {
             return null;
         }
-        stats.reset();
+        statsRecorder.reset();
         producers.forEach(
-                (partition, producer) -> stats.updateCumulativeStats(producer.getTopic(), producer.getStats()));
-        return stats;
+                (partition, producer) -> statsRecorder.updateCumulativeStats(producer.getTopic(), producer.getStats()));
+        return statsRecorder;
     }
 
     public List<ProducerImpl<T>> getProducers() {

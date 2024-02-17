@@ -69,6 +69,7 @@ import org.apache.pulsar.client.api.MessageId;
 import org.apache.pulsar.client.api.Producer;
 import org.apache.pulsar.client.api.ProducerAccessMode;
 import org.apache.pulsar.client.api.ProducerCryptoFailureAction;
+import org.apache.pulsar.client.api.ProducerStats;
 import org.apache.pulsar.client.api.PulsarClientException;
 import org.apache.pulsar.client.api.PulsarClientException.CryptoException;
 import org.apache.pulsar.client.api.PulsarClientException.TimeoutException;
@@ -131,6 +132,7 @@ public class ProducerImpl<T> extends ProducerBase<T> implements TimerTask, Conne
     private final int partitionIndex;
 
     private final ProducerStatsRecorder stats;
+    private final ProducerStatsRecorder statsRecorder;
 
     private final CompressionCodec compressor;
 
@@ -261,6 +263,12 @@ public class ProducerImpl<T> extends ProducerBase<T> implements TimerTask, Conne
         } else {
             stats = ProducerStatsDisabled.INSTANCE;
         }
+        ProducerStats statsRecorder = metricsTracker.getStats();
+        if (statsRecorder instanceof ProducerStatsRecorder) {
+            this.statsRecorder = (ProducerStatsRecorder) statsRecorder;
+        } else {
+            this.statsRecorder = ProducerStatsDisabled.INSTANCE;
+        }
 
         if (conf.getProperties().isEmpty()) {
             metadata = Collections.emptyMap();
@@ -359,12 +367,14 @@ public class ProducerImpl<T> extends ProducerBase<T> implements TimerTask, Conne
                 try {
                     if (e != null) {
                         stats.incrementSendFailed();
+                        metricsTracker.recordSendFailed();
                         onSendAcknowledgement(interceptorMessage, null, e);
                         future.completeExceptionally(e);
                     } else {
                         onSendAcknowledgement(interceptorMessage, interceptorMessage.getMessageId(), null);
                         future.complete(interceptorMessage.getMessageId());
                         stats.incrementNumAcksReceived(System.nanoTime() - createdAt);
+                        metricsTracker.recordAckReceived(System.nanoTime() - createdAt);
                     }
                 } finally {
                     interceptorMessage.getDataBuffer().release();
@@ -379,12 +389,14 @@ public class ProducerImpl<T> extends ProducerBase<T> implements TimerTask, Conne
                         msg.getDataBuffer().retain();
                         if (e != null) {
                             stats.incrementSendFailed();
+                            metricsTracker.recordSendFailed();
                             onSendAcknowledgement(msg, null, e);
                             sendCallback.getFuture().completeExceptionally(e);
                         } else {
                             onSendAcknowledgement(msg, msg.getMessageId(), null);
                             sendCallback.getFuture().complete(msg.getMessageId());
                             stats.incrementNumAcksReceived(System.nanoTime() - createdAt);
+                            metricsTracker.recordAckReceived(System.nanoTime() - createdAt);
                         }
                         nextMsg = nextCallback.getNextMessage();
                         nextCallback = nextCallback.getNextSendCallback();
@@ -1894,6 +1906,7 @@ public class ProducerImpl<T> extends ProducerBase<T> implements TimerTask, Conne
         }
 
         stats.cancelStatsTimeout();
+        metricsTracker.close();
     }
 
     private void resendMessages(ClientCnx cnx, long expectedEpoch) {
@@ -2234,6 +2247,7 @@ public class ProducerImpl<T> extends ProducerBase<T> implements TimerTask, Conne
                 op.cmd.retain();
                 cnx.ctx().channel().eventLoop().execute(WriteInEventLoopCallback.create(this, cnx, op));
                 stats.updateNumMsgsSent(op.numMessagesInBatch, op.batchSizeByte);
+                metricsTracker.recordMessagesSent(op.numMessagesInBatch, op.batchSizeByte);
             } else {
                 if (log.isDebugEnabled()) {
                     log.debug("[{}] [{}] Connection is not ready -- sequenceId {}", topic, producerName,
@@ -2299,6 +2313,7 @@ public class ProducerImpl<T> extends ProducerBase<T> implements TimerTask, Conne
             cnx.ctx().write(op.cmd, cnx.ctx().voidPromise());
             op.updateSentTimestamp();
             stats.updateNumMsgsSent(op.numMessagesInBatch, op.batchSizeByte);
+            metricsTracker.recordMessagesSent(op.numMessagesInBatch, op.batchSizeByte);
         }
         cnx.ctx().flush();
         if (!changeToReadyState()) {
@@ -2362,7 +2377,7 @@ public class ProducerImpl<T> extends ProducerBase<T> implements TimerTask, Conne
 
     @Override
     public ProducerStatsRecorder getStats() {
-        return stats;
+        return statsRecorder;
     }
 
     @Override

@@ -100,6 +100,7 @@ public class MultiTopicsConsumerImpl<T> extends ConsumerBase<T> {
     TopicsPartitionChangedListener topicsPartitionChangedListener;
     CompletableFuture<Void> partitionsAutoUpdateFuture = null;
     private final MultiTopicConsumerStatsRecorderImpl stats;
+    private final MultiTopicConsumerStatsRecorderImpl statsRecorder;
     private final ConsumerConfigurationData<T> internalConfig;
 
     private final MessageIdAdv startMessageId;
@@ -150,6 +151,12 @@ public class MultiTopicsConsumerImpl<T> extends ConsumerBase<T> {
         this.stats = client.getConfiguration().getStatsIntervalSeconds() > 0
                 ? new MultiTopicConsumerStatsRecorderImpl(this)
                 : null;
+        ConsumerStats statsRecorder = metricsTracker.getStats();
+        if (statsRecorder instanceof MultiTopicConsumerStatsRecorderImpl) {
+            this.statsRecorder = (MultiTopicConsumerStatsRecorderImpl) statsRecorder;
+        } else {
+            this.statsRecorder = null;
+        }
 
         // start track and auto subscribe partition increment
         if (conf.isAutoUpdatePartitions()) {
@@ -402,6 +409,7 @@ public class MultiTopicsConsumerImpl<T> extends ConsumerBase<T> {
             State state = getState();
             if (state != State.Closing && state != State.Closed) {
                 stats.incrementNumBatchReceiveFailed();
+                metricsTracker.recordBatchReceiveFailed();
                 throw PulsarClientException.unwrap(e);
             } else {
                 return null;
@@ -871,13 +879,13 @@ public class MultiTopicsConsumerImpl<T> extends ConsumerBase<T> {
 
     @Override
     public synchronized ConsumerStats getStats() {
-        if (stats == null) {
+        if (statsRecorder == null) {
             return null;
         }
-        stats.reset();
+        statsRecorder.reset();
 
-        consumers.forEach((partition, consumer) -> stats.updateCumulativeStats(partition, consumer.getStats()));
-        return stats;
+        consumers.forEach((partition, consumer) -> statsRecorder.updateCumulativeStats(partition, consumer.getStats()));
+        return statsRecorder;
     }
 
     @Override

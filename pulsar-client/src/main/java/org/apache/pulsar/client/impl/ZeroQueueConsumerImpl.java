@@ -126,9 +126,11 @@ public class ZeroQueueConsumerImpl<T> extends ConsumerImpl<T> {
             } while (true);
 
             stats.updateNumMsgsReceived(message);
+            metricsTracker.recordMessageReceived(message);
             return message;
         } catch (InterruptedException e) {
             stats.incrementNumReceiveFailed();
+            metricsTracker.recordReceiveFailed();
             throw PulsarClientException.unwrap(e);
         } finally {
             // Finally blocked is invoked in case the block on incomingMessages is interrupted
@@ -167,6 +169,7 @@ public class ZeroQueueConsumerImpl<T> extends ConsumerImpl<T> {
 
         externalPinnedExecutor.execute(() -> {
             stats.updateNumMsgsReceived(message);
+            metricsTracker.recordMessageReceived(message);
             try {
                 if (log.isDebugEnabled()) {
                     log.debug("[{}][{}] Calling message listener for unqueued message {}", topic, subscription,

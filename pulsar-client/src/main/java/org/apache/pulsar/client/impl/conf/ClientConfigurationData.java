@@ -39,6 +39,7 @@ import lombok.NoArgsConstructor;
 import org.apache.pulsar.client.api.Authentication;
 import org.apache.pulsar.client.api.ProxyProtocol;
 import org.apache.pulsar.client.api.ServiceUrlProvider;
+import org.apache.pulsar.client.api.metrics.MetricsTrackerFactory;
 import org.apache.pulsar.client.impl.auth.AuthenticationDisabled;
 import org.apache.pulsar.client.util.Secret;
 
@@ -394,6 +395,25 @@ public class ClientConfigurationData implements Serializable, Cloneable {
             value = "The extra description of the client version. The length cannot exceed 64."
     )
     private String description;
+
+    @ApiModelProperty(
+            name = "metricsTrackerFactory",
+            value = "Metrics tracker factory."
+    )
+    @JsonIgnore
+    private transient MetricsTrackerFactory metricsTrackerFactory;
+
+    @ApiModelProperty(
+            name = "metricsTrackerFactoryClassName",
+            value = "Class name of metrics tracker provider."
+    )
+    private String metricsTrackerFactoryClassName;
+
+    @ApiModelProperty(
+            name = "metricsTrackerFactoryParamMap",
+            value = "Metrics tracker factory parameters as map."
+    )
+    private Map<String, String> metricsTrackerFactoryParamMap;
 
     /**
      * Gets the authentication settings for the client.

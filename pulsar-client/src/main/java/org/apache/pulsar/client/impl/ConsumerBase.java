@@ -54,6 +54,8 @@ import org.apache.pulsar.client.api.PulsarClientException;
 import org.apache.pulsar.client.api.Schema;
 import org.apache.pulsar.client.api.SubscriptionType;
 import org.apache.pulsar.client.api.TopicMessageId;
+import org.apache.pulsar.client.api.metrics.ConsumerMetricsTracker;
+import org.apache.pulsar.client.api.metrics.MetricsTrackerFactory;
 import org.apache.pulsar.client.api.transaction.Transaction;
 import org.apache.pulsar.client.impl.conf.ConsumerConfigurationData;
 import org.apache.pulsar.client.impl.transaction.TransactionImpl;
@@ -119,6 +121,8 @@ public abstract class ConsumerBase<T> extends HandlerState implements Consumer<T
     protected volatile long consumerEpoch;
 
     protected final AtomicBoolean scaleReceiverQueueHint = new AtomicBoolean(false);
+
+    protected final ConsumerMetricsTracker metricsTracker;
 
     protected ConsumerBase(PulsarClientImpl client, String topic, ConsumerConfigurationData<T> conf,
                            int receiverQueueSize, ExecutorProvider executorProvider,
@@ -188,6 +192,13 @@ public abstract class ConsumerBase<T> extends HandlerState implements Consumer<T
             }
         } else {
             this.unAckedMessageTracker = UnAckedMessageTracker.UNACKED_MESSAGE_TRACKER_DISABLED;
+        }
+
+        MetricsTrackerFactory metricsTrackerFactory = client.getConfiguration().getMetricsTrackerFactory();
+        if (client.getConfiguration().getStatsIntervalSeconds() > 0 || metricsTrackerFactory != null) {
+            this.metricsTracker = metricsTrackerFactory.create(client, this);
+        } else {
+            this.metricsTracker = NoOpConsumerMetricsTracker.INSTANCE;
         }
 
         initReceiverQueueSize();

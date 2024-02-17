@@ -26,6 +26,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import org.apache.pulsar.client.api.PulsarClientException.UnsupportedAuthenticationException;
+import org.apache.pulsar.client.api.metrics.MetricsTrackerFactory;
 import org.apache.pulsar.common.classification.InterfaceAudience;
 import org.apache.pulsar.common.classification.InterfaceStability;
 
@@ -623,4 +624,9 @@ public interface ClientBuilder extends Serializable, Cloneable {
      * @return
      */
     ClientBuilder socks5ProxyPassword(String socks5ProxyPassword);
+
+    ClientBuilder metricsTrackerFactory(MetricsTrackerFactory metricsTrackerFactory);
+
+    ClientBuilder metricsTrackerFactory(String metricsTrackerFactoryClassName, Map<String, String> params)
+            throws PulsarClientException.InvalidConfigurationException;
 }

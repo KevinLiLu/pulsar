@@ -73,6 +73,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.Triple;
 import org.apache.pulsar.client.api.Consumer;
 import org.apache.pulsar.client.api.ConsumerCryptoFailureAction;
+import org.apache.pulsar.client.api.ConsumerStats;
 import org.apache.pulsar.client.api.DeadLetterPolicy;
 import org.apache.pulsar.client.api.Message;
 import org.apache.pulsar.client.api.MessageCrypto;
@@ -88,6 +89,7 @@ import org.apache.pulsar.client.api.SubscriptionMode;
 import org.apache.pulsar.client.api.SubscriptionType;
 import org.apache.pulsar.client.api.TopicMessageId;
 import org.apache.pulsar.client.api.TypedMessageBuilder;
+import org.apache.pulsar.client.api.metrics.ConsumerMetricsTracker;
 import org.apache.pulsar.client.api.transaction.TxnID;
 import org.apache.pulsar.client.impl.conf.ConsumerConfigurationData;
 import org.apache.pulsar.client.impl.crypto.MessageCryptoBc;
@@ -161,6 +163,9 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
     private final NegativeAcksTracker negativeAcksTracker;
 
     protected final ConsumerStatsRecorder stats;
+
+    protected final ConsumerStatsRecorder statsRecorder;
+
     @Getter(AccessLevel.PACKAGE)
     private final int priorityLevel;
     private final SubscriptionMode subscriptionMode;
@@ -302,6 +307,12 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
             stats = new ConsumerStatsRecorderImpl(client, conf, this);
         } else {
             stats = ConsumerStatsDisabled.INSTANCE;
+        }
+        ConsumerStats statsRecorder = metricsTracker.getStats();
+        if (statsRecorder instanceof ConsumerStatsRecorder) {
+            this.statsRecorder = (ConsumerStatsRecorder) statsRecorder;
+        } else {
+            this.statsRecorder = ConsumerStatsDisabled.INSTANCE;
         }
 
         duringSeek = new AtomicBoolean(false);
@@ -463,6 +474,7 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
         } catch (InterruptedException e) {
             ExceptionHandler.handleInterruptedException(e);
             stats.incrementNumReceiveFailed();
+            metricsTracker.recordReceiveFailed();
             throw PulsarClientException.unwrap(e);
         }
     }
@@ -504,6 +516,7 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
             State state = getState();
             if (state != State.Closing && state != State.Closed) {
                 stats.incrementNumReceiveFailed();
+                metricsTracker.recordReceiveFailed();
                 throw PulsarClientException.unwrap(e);
             } else {
                 return null;
@@ -520,6 +533,7 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
             State state = getState();
             if (state != State.Closing && state != State.Closed) {
                 stats.incrementNumBatchReceiveFailed();
+                metricsTracker.recordBatchReceiveFailed();
                 throw PulsarClientException.unwrap(e);
             } else {
                 return null;
@@ -551,6 +565,7 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
                                                     TransactionImpl txn) {
         if (getState() != State.Ready && getState() != State.Connecting) {
             stats.incrementNumAcksFailed();
+            metricsTracker.recordAckFailed();
             PulsarClientException exception = new PulsarClientException("Consumer not ready. State: " + getState());
             if (AckType.Individual.equals(ackType)) {
                 onAcknowledge(messageId, exception);
@@ -572,6 +587,7 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
                                                     Map<String, Long> properties, TransactionImpl txn) {
         if (getState() != State.Ready && getState() != State.Connecting) {
             stats.incrementNumAcksFailed();
+            metricsTracker.recordAckFailed();
             PulsarClientException exception = new PulsarClientException("Consumer not ready. State: " + getState());
             if (AckType.Individual.equals(ackType)) {
                 onAcknowledge(messageIdList, exception);
@@ -603,6 +619,7 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
 
         if (getState() != State.Ready && getState() != State.Connecting) {
             stats.incrementNumAcksFailed();
+            metricsTracker.recordAckFailed();
             PulsarClientException exception = new PulsarClientException("Consumer not ready. State: " + getState());
             if (AckType.Individual.equals(ackType)) {
                 onAcknowledge(messageId, exception);
@@ -625,6 +642,13 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
                             .blockIfQueueFull(false)
                             .create();
                     stats.setRetryLetterProducerStats(retryLetterProducer.getStats());
+                    ConsumerStats metricsProviderStats = metricsTracker.getStats();
+                    if (metricsProviderStats instanceof ConsumerStatsRecorder) {
+                        // Needed for backwards compatibility as retry producer is set at ConsumerStatsRecorder
+                        // interface (not ConsumerStats)
+                        ((ConsumerStatsRecorder) metricsProviderStats)
+                                .setRetryLetterProducerStats(retryLetterProducer.getStats());
+                    }
                 }
             } catch (Exception e) {
                 log.error("Create retry letter producer exception with topic: {}",
@@ -1047,6 +1071,7 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
         }
 
         stats.getStatTimeout().ifPresent(Timeout::cancel);
+        metricsTracker.close();
 
         setState(State.Closing);
 
@@ -1117,6 +1142,7 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
         }
         negativeAcksTracker.close();
         stats.getStatTimeout().ifPresent(Timeout::cancel);
+        metricsTracker.close();
         if (poolMessages) {
             releasePooledMessagesAndStopAcceptNew();
         }
@@ -1720,6 +1746,7 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
                 increaseAvailablePermits(currentCnx);
             }
             stats.updateNumMsgsReceived(msg);
+            metricsTracker.recordMessageReceived(msg);
 
             trackMessage(msg);
         }
@@ -1924,6 +1951,7 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
         currentCnx.ctx().writeAndFlush(cmd, currentCnx.ctx().voidPromise());
         increaseAvailablePermits(currentCnx);
         stats.incrementNumReceiveFailed();
+        metricsTracker.recordReceiveFailed();
     }
 
     private void discardCorruptedMessage(MessageIdData messageId, ClientCnx currentCnx,
@@ -1939,6 +1967,7 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
         currentCnx.ctx().writeAndFlush(cmd, currentCnx.ctx().voidPromise());
         increaseAvailablePermits(currentCnx);
         stats.incrementNumReceiveFailed();
+        metricsTracker.recordReceiveFailed();
     }
 
     @Override
@@ -2180,6 +2209,13 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
                                     .createAsync();
                     deadLetterProducer.thenAccept(dlqProducer -> {
                         stats.setDeadLetterProducerStats(dlqProducer.getStats());
+                        ConsumerStats metricsProviderStats = metricsTracker.getStats();
+                        if (metricsProviderStats instanceof ConsumerStatsRecorder) {
+                            // Needed for backwards compatibility as dlq producer is set at ConsumerStatsRecorder
+                            // interface (not ConsumerStats)
+                            ((ConsumerStatsRecorder) metricsProviderStats)
+                                    .setDeadLetterProducerStats(dlqProducer.getStats());
+                        }
                     });
                 }
             } finally {
@@ -2628,7 +2664,11 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
 
     @Override
     public ConsumerStatsRecorder getStats() {
-        return stats;
+        return statsRecorder;
+    }
+
+    ConsumerMetricsTracker getMetricsTracker() {
+        return metricsTracker;
     }
 
     void setTerminated() {

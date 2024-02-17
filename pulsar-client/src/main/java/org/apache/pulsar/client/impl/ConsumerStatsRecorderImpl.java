@@ -115,7 +115,9 @@ public class ConsumerStatsRecorderImpl implements ConsumerStatsRecorder {
                 .without(SerializationFeature.FAIL_ON_EMPTY_BEANS);
 
         try {
-            log.info("Starting Pulsar consumer status recorder with config: {}", w.writeValueAsString(conf));
+            if (conf != null) {
+                log.info("Starting Pulsar consumer status recorder with config: {}", w.writeValueAsString(conf));
+            }
             log.info("Pulsar client config: {}", w.writeValueAsString(pulsarClient.getConfiguration()));
         } catch (IOException e) {
             log.error("Failed to dump config info", e);
